@@ -313,11 +313,11 @@
       const helper = new OctreeHelper(worldOctree);
       helper.visible = false;
       scene.add(helper);
-      const gui = new GUI({ width: 200 });
-      gui.add({ debug: false }, 'debug')
-        .onChange(function (value) {
-          helper.visible = value;
-        });
+      // const gui = new GUI({ width: 200 });
+      // gui.add({ debug: false }, 'debug')
+      //   .onChange(function (value) {
+      //     helper.visible = value;
+      //   });
     });
 
     function teleportPlayerIfOob() {
@@ -360,7 +360,7 @@
       const soldier = gltf.scene;
       scene.add(soldier);
       // Set initial position for the soldier in front of the player
-      const soldierOffset = new THREE.Vector3(0, -6.2, -5); // Adjust Y to be above ground
+      const soldierOffset = new THREE.Vector3(0, -2.3, -5); // Adjust Y to be above ground
       soldier.position.copy(camera.position).add(soldierOffset);
       // Basic movement logic for the soldier
       const speed = 0.02; // Movement speed
