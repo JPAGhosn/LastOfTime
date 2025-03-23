@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyJSGame</title>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./node_modules/three/build/three.module.js",
+        "three/addons/": "./jsm/"
+      }
+    }
+  </script>
+</head>
+
+<body>
+
+  <div id="container"></div>
+
+  <script type="module">
+
+    import * as THREE from 'three';
+
+    import Stats from 'three/addons/libs/stats.module.js';
+
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    import { Octree } from 'three/addons/math/Octree.js';
+    import { OctreeHelper } from 'three/addons/helpers/OctreeHelper.js';
+
+    import { Capsule } from 'three/addons/math/Capsule.js';
+
+    import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+
+    const clock = new THREE.Clock();
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x7ebcd6); // Color of the sky
+    scene.fog = new THREE.Fog(0xdbdbdb, 0, 50);
+
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.4, 1000);
+    camera.rotation.order = 'YXZ';
+
+    const fillLight1 = new THREE.HemisphereLight(0x8dc1de, 0x00668d, 1.5);
+    fillLight1.position.set(2, 1, 1);
+    scene.add(fillLight1);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    directionalLight.position.set(- 5, 25, - 1);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.camera.near = 0.01;
+    directionalLight.shadow.camera.far = 500;
+    directionalLight.shadow.camera.right = 30;
+    directionalLight.shadow.camera.left = - 30;
+    directionalLight.shadow.camera.top = 30;
+    directionalLight.shadow.camera.bottom = - 30;
+    directionalLight.shadow.mapSize.width = 1024;
+    directionalLight.shadow.mapSize.height = 1024;
+    directionalLight.shadow.radius = 4;
+    directionalLight.shadow.bias = - 0.00006;
+    scene.add(directionalLight);
+
+    const container = document.getElementById('container');
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setAnimationLoop(animate);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.VSMShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    container.appendChild(renderer.domElement);
+
+    const stats = new Stats();
+    stats.domElement.style.position = 'absolute';
+    stats.domElement.style.top = '0px';
+    container.appendChild(stats.domElement);
+
+    const GRAVITY = 30;
+    const NUM_BULLETS = 100;
+    const BULLET_RADIUS = 0.02; // Update this value to the desired radius
+    const STEPS_PER_FRAME = 5;
+
+    const bulletGeometry = new THREE.SphereGeometry(BULLET_RADIUS, 32, 32); // radius, widthSegments, heightSegments
+    const bulletMaterial = new THREE.MeshLambertMaterial({ color: 0x000000 }); // Black color
+
+    const bullets = [];
+    let bulletIdx = 0;
+
+    let gun;
+    let gunRecoil = 0;
+    const maxRecoil = 0.05; // Reduced maximum recoil amount
+    const recoilDamping = 0.9; // Damping factor for recoil
+
+    const fpContainer = new THREE.Group();
+    scene.add(fpContainer);
+
+    for (let i = 0; i < NUM_BULLETS; i++) {
+      const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+      bullet.castShadow = true;
+      bullet.receiveShadow = true;
+      scene.add(bullet);
+      bullets.push({
+        mesh: bullet,
+        collider: new THREE.Sphere(new THREE.Vector3(0, - 100, 0), BULLET_RADIUS),
+        velocity: new THREE.Vector3() // set later
+      });
+    }
+
+    const worldOctree = new Octree();
+    const playerCollider = new Capsule(new THREE.Vector3(0, 0.35, 0), new THREE.Vector3(0, 1, 0), 0.35);
+    const playerVelocity = new THREE.Vector3();
+    const playerDirection = new THREE.Vector3();
+    let playerOnFloor = false;
+    let mouseTime = 0;
+
+    const keyStates = {};
+    const vector1 = new THREE.Vector3();
+    const vector2 = new THREE.Vector3();
+    const vector3 = new THREE.Vector3();
+
+    // Bot class definition
+    class Bot {
+      constructor(position) {
+        this.mesh = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1, 0.5), new THREE.MeshLambertMaterial({ color: 0xff0000 }));
+        this.mesh.position.copy(position);
+        scene.add(this.mesh);
+        this.velocity = new THREE.Vector3();
+      }
+
+      update(targetPosition) {
+        const direction = new THREE.Vector3().subVectors(targetPosition, this.mesh.position).normalize();
+        this.velocity.copy(direction).multiplyScalar(0.02); // Move towards the player
+        this.mesh.position.add(this.velocity);
+      }
+    }
+
+    const bots = [];
+    for (let i = 0; i < 5; i++) {
+      const bot = new Bot(new THREE.Vector3(Math.random() * 10 - 5, 0.5, Math.random() * 10 - 5));
+      bots.push(bot);
+    }
+
+    const container = document.getElementById('container');
+
+    document.addEventListener('keydown', (event) => {
+      keyStates[event.code] = true;
+    });
+
+    document.addEventListener('keyup', (event) => {
+      keyStates[event.code] = false;
+    });
+
+    // Enter game mode
+    container.addEventListener('mousedown', () => {
+      document.body.requestPointerLock();
+      mouseTime = performance.now();
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (document.pointerLockElement !== null) {
+        throwBullet();
+        gunRecoil = maxRecoil; // Set recoil amount when shooting
+      }
+    });
+
+    document.body.addEventListener('mousemove', (event) => {
+      if (document.pointerLockElement === document.body) {
+        camera.rotation.y -= event.movementX / 500;
+        camera.rotation.x -= event.movementY / 500;
+      }
+    });
+
+    window.addEventListener('resize', onWindowResize);
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function throwBullet() {
+      const sphere = bullets[bulletIdx];
+      camera.getWorldDirection(playerDirection);
+      const gunOffset = new THREE.Vector3(0.3, -0.2, -0.7); // Further adjusted offset to raise the bullet's starting position
+      gunOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), camera.rotation.y); // Adjust offset based on player rotation
+      sphere.collider.center.copy(playerCollider.end).add(gunOffset);
+      const impulse = 150;
+      sphere.velocity.copy(playerDirection).multiplyScalar(impulse);
+      sphere.velocity.addScaledVector(playerVelocity, 2);
+      bulletIdx = (bulletIdx + 1) % bullets.length;
+    }
+
+    function updateBots() {
+      bots.forEach(bot => {
+        bot.update(camera.position); // Move bots towards the player
+      });
+    }
+
+    function animate() {
+      const deltaTime = Math.min(0.05, clock.getDelta()) / STEPS_PER_FRAME;
+
+      for (let i = 0; i < STEPS_PER_FRAME; i++) {
+        controls(deltaTime);
+        updatePlayer(deltaTime);
+        updateBullets(deltaTime);
+        updateBots(); // Update bot positions
+        teleportPlayerIfOob();
+      }
+
+      renderer.render(scene, camera);
+      stats.update();
+    }
+
+  </script>
+</body>
+
+</html>
